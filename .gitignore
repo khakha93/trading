@@ -1,3 +1,11 @@
+# API Token Cache & Data
+data/
+.token_cache.json
+
+# Output Figures & Diagrams
+output/
+payoff_diagram.png
+
 # documents
 *.xlsx
 
