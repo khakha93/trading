@@ -1,5 +1,6 @@
 # --- Windows SSL Bug Patch ---
 import os
+import subprocess
 import sys
 import ssl
 
@@ -26,10 +27,8 @@ def main() -> int:
         import app  # noqa: F401
         return 0
 
-    import streamlit.web.cli as stcli
-
-    sys.argv = ["streamlit", "run", "app.py", "--server.headless", "true"]
-    return int(stcli.main())
+    cmd = [sys.executable, "-m", "streamlit", "run", "app.py", "--server.headless", "true"]
+    return subprocess.call(cmd)
 
 
 if __name__ == '__main__':
