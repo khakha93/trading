@@ -24,6 +24,7 @@ import pandas as pd
 import numpy as np
 import re
 import os
+import threading
 import plotly.graph_objects as go
 
 from src import config
@@ -244,15 +245,36 @@ if 'token' not in st.session_state:
 if 'queried_real_prices' not in st.session_state:
     st.session_state.queried_real_prices = {}
 
-# Initialize master file
-try:
-    download_master_file()
-except Exception as e:
-    st.error(f"마스터 파일 관리 오류: {e}")
+def ensure_master_file_ready():
+    if st.session_state.get("master_download_started"):
+        return
+
+    st.session_state.master_download_started = True
+    if os.path.exists(config.MASTER_FILE):
+        st.session_state.master_status = "ready"
+        return
+
+    st.session_state.master_status = "loading"
+
+    def _download_master_file():
+        try:
+            download_master_file()
+        except Exception:
+            pass
+
+    threading.Thread(target=_download_master_file, daemon=True).start()
+
+
+ensure_master_file_ready()
 
 # ----------------- Sidebar -----------------
 
 st.sidebar.markdown("<h2 style='font-family: Outfit; font-weight: 700; margin-bottom: 15px;'>⚙️ 설정 & 시뮬레이터</h2>", unsafe_allow_html=True)
+
+if st.session_state.get("master_status") == "loading":
+    st.sidebar.info("옵션 마스터 데이터를 백그라운드에서 불러오는 중입니다. 화면은 바로 열립니다.")
+elif not os.path.exists(config.MASTER_FILE):
+    st.sidebar.warning("옵션 마스터 데이터가 없어 일부 옵션 검색 기능이 제한될 수 있습니다.")
 
 # API Status Card (Dynamic HTML status badge with CSS pulse animation)
 if check_api_keys():
