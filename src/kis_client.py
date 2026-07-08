@@ -56,52 +56,85 @@ def get_access_token():
             print(f"[-] 응답 내용: {response.text}")
         sys.exit(1)
 
+
 def fetch_option_price(token, symbol):
-    """해외옵션 종목 현재가 조회"""
-    time.sleep(1.0)  # KIS API 초당 호출 제한 방지
+    """해외옵션 종목 현재가 조회 (자가치유 토큰 갱신 포함)"""
+    def do_call(t):
+        headers = {
+            "content-type": "application/json; charset=utf-8",
+            "authorization": f"Bearer {t}",
+            "appkey": APP_KEY,
+            "appsecret": APP_SECRET,
+            "tr_id": "HHDFO55010000",
+            "custtype": CUST_TYPE,
+        }
+        params = {"SRS_CD": symbol}
+        time.sleep(1.0)
+        return requests.get(url, headers=headers, params=params)
+
     url = f"{BASE_URL}/uapi/overseas-futureoption/v1/quotations/opt-price"
-    headers = {
-        "content-type": "application/json; charset=utf-8",
-        "authorization": f"Bearer {token}",
-        "appkey": APP_KEY,
-        "appsecret": APP_SECRET,
-        "tr_id": "HHDFO55010000",
-        "custtype": CUST_TYPE,
-    }
-    params = {"SRS_CD": symbol}
-    
+    response = None
     try:
-        response = requests.get(url, headers=headers, params=params)
+        response = do_call(token)
+        try:
+            res_json = response.json()
+            if res_json.get("msg_cd") == "EGW00123" or "만료" in res_json.get("msg1", ""):
+                print("[!] 토큰이 KIS 서버에서 만료되었습니다. 캐시를 비우고 재발급합니다.")
+                if os.path.exists(CACHE_FILE):
+                    os.remove(CACHE_FILE)
+                new_token = get_access_token()
+                response = do_call(new_token)
+        except Exception:
+            pass
+            
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
         print(f"[-] 시세 조회 API 호출 오류: {e}")
         if response is not None:
             print(f"[-] 응답 내용: {response.text}")
-        sys.exit(1)
+        return None
 
 def fetch_stock_price(token, exchange, symbol):
-    """해외주식 종목 현재가 조회"""
-    time.sleep(1.0)  # KIS API 초당 호출 제한 방지
+    """해외주식 종목 현재가 조회 (자가치유 토큰 갱신 및 정밀 디버깅 포함)"""
+    def do_call(t):
+        headers = {
+            "content-type": "application/json; charset=utf-8",
+            "authorization": f"Bearer {t}",
+            "appkey": APP_KEY,
+            "appsecret": APP_SECRET,
+            "tr_id": "HHDFS00000300",
+            "custtype": CUST_TYPE
+        }
+        params = {
+            "AUTH": "",
+            "EXCD": exchange.upper(),
+            "SYMB": symbol
+        }
+        time.sleep(1.0)
+        return requests.get(url, headers=headers, params=params)
+
     url = f"{BASE_URL}/uapi/overseas-price/v1/quotations/price"
-    headers = {
-        "content-type": "application/json",
-        "authorization": f"Bearer {token}",
-        "appkey": APP_KEY,
-        "appsecret": APP_SECRET,
-        "tr_id": "HHDFS00000300"
-    }
-    params = {
-        "AUTH": "",
-        "EXCD": exchange,
-        "SYMB": symbol
-    }
+    response = None
     try:
-        response = requests.get(url, headers=headers, params=params)
+        response = do_call(token)
+        try:
+            res_json = response.json()
+            if res_json.get("msg_cd") == "EGW00123" or "만료" in res_json.get("msg1", ""):
+                print("[!] 토큰이 KIS 서버에서 만료되었습니다. 캐시를 비우고 재발급합니다.")
+                if os.path.exists(CACHE_FILE):
+                    os.remove(CACHE_FILE)
+                new_token = get_access_token()
+                response = do_call(new_token)
+        except Exception:
+            pass
+            
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
         print(f"[-] 기초자산 시세 조회 API 호출 오류: {e}")
+        if response is not None:
+            print(f"[-] KIS API 상세 에러 응답: {response.text}")
         return None
 
 def get_effective_premium(output):
