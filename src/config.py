@@ -23,7 +23,7 @@ def _load_local_env() -> None:
     load_dotenv(override=False)
 
 
-def _read_setting(name: str, default: str | None = None, secrets: Any | None = None) -> str | None:
+def _read_setting(name: str, default: str = None, secrets: Any = None) -> str:
     value = os.getenv(name)
     if value is not None and str(value).strip():
         return value
@@ -42,7 +42,7 @@ def _read_setting(name: str, default: str | None = None, secrets: Any | None = N
     return default
 
 
-def load_settings(secrets: Any | None = None) -> dict[str, str]:
+def load_settings(secrets: Any = None) -> dict:
     _load_local_env()
 
     settings = {

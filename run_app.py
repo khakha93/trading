@@ -1,25 +1,10 @@
-# --- Windows SSL Bug Patch ---
 import os
 import subprocess
 import sys
-import ssl
 
-if sys.platform == 'win32':
-    try:
-        orig_load_windows_store_certs = ssl.SSLContext._load_windows_store_certs
-        def patched_load_windows_store_certs(self, storename, purpose):
-            try:
-                orig_load_windows_store_certs(self, storename, purpose)
-            except Exception:
-                try:
-                    import certifi
-                    self.load_verify_locations(certifi.where())
-                except Exception:
-                    pass
-        ssl.SSLContext._load_windows_store_certs = patched_load_windows_store_certs
-    except Exception:
-        pass
-# -----------------------------
+from ssl_bootstrap import apply_ssl_bootstrap
+
+apply_ssl_bootstrap()
 
 
 def main() -> int:
@@ -27,8 +12,14 @@ def main() -> int:
         import app  # noqa: F401
         return 0
 
-    cmd = [sys.executable, "-m", "streamlit", "run", "app.py", "--server.headless", "true"]
-    return subprocess.call(cmd)
+    project_root = os.path.dirname(os.path.abspath(__file__))
+    os.environ["PYTHONPATH"] = os.pathsep.join(filter(None, [project_root, os.environ.get("PYTHONPATH", "")]))
+
+    cmd = [sys.executable, "-m", "streamlit", "run", "app.py", "--server.headless", "true", "--server.port", "8502"]
+    env = os.environ.copy()
+    env.setdefault("SSL_CERT_FILE", os.environ.get("SSL_CERT_FILE", ""))
+    env.setdefault("REQUESTS_CA_BUNDLE", os.environ.get("REQUESTS_CA_BUNDLE", ""))
+    return subprocess.call(cmd, cwd=project_root, env=env)
 
 
 if __name__ == '__main__':
