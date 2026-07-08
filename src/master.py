@@ -35,16 +35,12 @@ def download_master_file():
             if not os.path.exists(MASTER_FILE):
                 sys.exit(1)
 
-def parse_option_chain(ticker):
-    """마스터 파일에서 티커와 매칭되는 미국옵션 리스트 파싱 및 출력"""
-    print(f"[*] 마스터 파일({MASTER_FILE})에서 '{ticker}' 옵션 목록을 검색하는 중...")
-    
+def get_option_chain(ticker):
+    """마스터 파일에서 티커와 매칭되는 미국옵션 리스트 파싱 및 반환"""
     if not os.path.exists(MASTER_FILE):
-        print(f"[-] 마스터 파일({MASTER_FILE})이 존재하지 않습니다.")
-        sys.exit(1)
+        return []
         
     options = []
-    
     try:
         with open(MASTER_FILE, 'r', encoding='cp949', errors='ignore') as f:
             for line in f:
@@ -59,9 +55,16 @@ def parse_option_chain(ticker):
                         _, expiry, option_type, strike = match.groups()
                         opt_type = "Call" if option_type == 'C' else "Put"
                         
+                        raw_date = line[37:45].strip()
+                        if len(raw_date) == 8 and raw_date.isdigit():
+                            expiry_date = f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:8]}"
+                        else:
+                            expiry_date = "Unknown"
+                            
                         options.append({
                             "symbol": symbol,
                             "expiry": expiry,
+                            "expiry_date": expiry_date,
                             "type": opt_type,
                             "strike": float(strike)
                         })
@@ -69,18 +72,29 @@ def parse_option_chain(ticker):
                         options.append({
                             "symbol": symbol,
                             "expiry": "Unknown",
+                            "expiry_date": "Unknown",
                             "type": "Unknown",
                             "strike": 0.0
                         })
     except Exception as e:
         print(f"[-] 마스터 파일 파싱 중 오류 발생: {e}")
+        
+    options.sort(key=lambda x: (x["expiry_date"], x["strike"], x["type"]))
+    return options
+
+def parse_option_chain(ticker):
+    """마스터 파일에서 티커와 매칭되는 미국옵션 리스트 파싱 및 출력"""
+    print(f"[*] 마스터 파일({MASTER_FILE})에서 '{ticker}' 옵션 목록을 검색하는 중...")
+    
+    if not os.path.exists(MASTER_FILE):
+        print(f"[-] 마스터 파일({MASTER_FILE})이 존재하지 않습니다.")
         sys.exit(1)
+        
+    options = get_option_chain(ticker)
 
     if not options:
         print(f"[-] '{ticker}'에 해당하는 옵션 종목을 찾지 못했습니다.")
         return
-
-    options.sort(key=lambda x: (x["expiry"], x["strike"], x["type"]))
 
     print("\n" + "=" * 80)
     print(f"★ [{ticker}] US Stock Option Chain ★")
