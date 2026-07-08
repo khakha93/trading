@@ -16,6 +16,20 @@ pip install -r requirements.txt
 1. 프로젝트 루트 폴더에 있는 `config.env.template` 파일을 복사하여 `.env` 또는 `config.env` 파일을 생성합니다.
 2. 한국투자증권 Developers 센터에서 발급받은 실전투자용 `APP_KEY`와 `APP_SECRET`을 설정 파일에 입력합니다.
 
+### Streamlit Cloud 배포 시
+Streamlit Cloud에서는 로컬 `.env` 파일 대신 앱의 Secrets를 사용합니다.
+
+1. Streamlit Cloud의 앱 설정 > Secrets에 아래 형식으로 입력합니다.
+
+```toml
+APP_KEY = "발급받은_실전투자_APP_KEY"
+APP_SECRET = "발급받은_실전투자_APP_SECRET"
+CUST_TYPE = "P"
+```
+
+2. 로컬 실행 시에는 `.env` 파일을 계속 사용하면 됩니다.
+3. 코드에서는 `.env` → 환경 변수 → Streamlit Secrets 순서로 값을 읽습니다.
+
 > **주의**: 한국투자증권 해외옵션 조회 API는 **실전투자** 환경에서만 조회 가능하며, 모의투자는 지원하지 않습니다.
 
 ```env

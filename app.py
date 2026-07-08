@@ -26,7 +26,13 @@ import re
 import os
 import plotly.graph_objects as go
 
-from src.config import APP_KEY, APP_SECRET
+from src import config
+
+config.load_settings(secrets=getattr(st, "secrets", None))
+
+APP_KEY = config.APP_KEY
+APP_SECRET = config.APP_SECRET
+
 from src.kis_client import get_access_token, fetch_option_price, fetch_stock_price, get_effective_premium
 from src.master import download_master_file, get_option_chain, get_underlying_info
 from src.pricing import black_scholes, implied_volatility
