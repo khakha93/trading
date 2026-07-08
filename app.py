@@ -806,7 +806,7 @@ with tab2:
     col_search1, col_search2 = st.columns([4, 1])
     search_ticker = col_search1.text_input(
         "기초자산 Ticker 입력 (예: AAPL, PG, TSLA, NVDA)",
-        value="AAPL",
+        value="",
         key="search_ticker_input"
     ).upper().strip()
     
@@ -815,8 +815,17 @@ with tab2:
         st.session_state.last_search_ticker = ""
         
     search_clicked = col_search2.button("종목 검색", type="primary", use_container_width=True)
-    
-    if search_clicked or st.session_state.last_search_ticker != search_ticker:
+
+    if 'last_search_ticker' not in st.session_state:
+        st.session_state.last_search_ticker = None
+
+    should_search = bool(search_ticker) and (
+        search_clicked or (
+            st.session_state.last_search_ticker is not None and st.session_state.last_search_ticker != search_ticker
+        )
+    )
+
+    if should_search:
         with st.spinner("옵션 목록 및 현재가 로딩 중..."):
             st.session_state.last_search_ticker = search_ticker
             st.session_state.options_list = get_option_chain(search_ticker)
