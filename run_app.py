@@ -1,4 +1,5 @@
 # --- Windows SSL Bug Patch ---
+import os
 import sys
 import ssl
 
@@ -19,8 +20,17 @@ if sys.platform == 'win32':
         pass
 # -----------------------------
 
-import streamlit.web.cli as stcli
+
+def main() -> int:
+    if os.environ.get("STREAMLIT_SERVER_PORT") or os.environ.get("STREAMLIT_GLOBAL"):
+        import app  # noqa: F401
+        return 0
+
+    import streamlit.web.cli as stcli
+
+    sys.argv = ["streamlit", "run", "app.py", "--server.headless", "true"]
+    return int(stcli.main())
+
 
 if __name__ == '__main__':
-    sys.argv = ["streamlit", "run", "app.py"]
-    sys.exit(stcli.main())
+    raise SystemExit(main())
