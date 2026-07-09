@@ -29,13 +29,8 @@ def render_analysis_tab(vol_change_val, rate_val) -> None:
     if st.session_state.basket:
         max_dte = max(opt.get("remn_cnt", 30) for opt in st.session_state.basket)
 
-    min_strike = min(opt["strike"] for opt in st.session_state.basket)
-    max_strike = max(opt["strike"] for opt in st.session_state.basket)
-
     days_to_expiry_val, target_underlying_val = render_simulation_controls(
         max_dte,
-        min_strike,
-        max_strike,
         vol_change_val,
         rate_val,
     )

@@ -87,24 +87,11 @@ def render_basket_overview():
     return True
 
 
-def render_simulation_controls(max_dte, min_strike, max_strike, vol_change_val, rate_val):
-    st.markdown("<h4 style='font-family: Outfit; margin-top: 15px; margin-bottom: 5px;'>⚙️ 수익곡선 상세 시뮬레이션 제어</h4>", unsafe_allow_html=True)
-    col_sim1, col_sim2 = st.columns(2)
+def get_simulation_price_range(rate_val):
+    """차트에 표시할 주가 시뮬레이션 범위 (x_min, x_max) 계산"""
+    if not st.session_state.basket:
+        return 0.0, 100.0
 
-    with col_sim1:
-        st.markdown("**⏱️ 잔존만기 일수 (DTE)**")
-        st.slider("DTE 슬라이더", min_value=0, max_value=int(max_dte), key="dte_slider", on_change=sync_widgets, args=("dte_slider", "dte_num"), label_visibility="collapsed")
-        days_to_expiry_val = st.number_input("DTE 정밀 입력 (일)", min_value=0, max_value=int(max_dte), step=1, key="dte_num", on_change=sync_widgets, args=("dte_num", "dte_slider"), label_visibility="collapsed")
-
-    with col_sim2:
-        st.markdown("**🎯 분석 목표 주가 ($)**")
-        st.slider("목표주가 슬라이더", min_value=float(min_strike), max_value=float(max_strike), key="target_slider", on_change=sync_widgets, args=("target_slider", "target_num"), label_visibility="collapsed")
-        target_underlying_val = st.number_input("목표주가 정밀 입력 ($)", min_value=float(min_strike), max_value=float(max_strike), step=0.01, key="target_num", on_change=sync_widgets, args=("target_num", "target_slider"), label_visibility="collapsed")
-
-    return days_to_expiry_val, target_underlying_val
-
-
-def render_analysis_chart_and_summary(vol_change_val, rate_val, days_to_expiry_val, target_underlying_val):
     if st.session_state.underlying_price is not None:
         recalculate_ivs(rate_val)
 
@@ -128,45 +115,68 @@ def render_analysis_chart_and_summary(vol_change_val, rate_val, days_to_expiry_v
     x_min = min(ci_lower, strike_lower, S_current * 0.9)
     x_max = max(ci_upper, strike_upper, S_current * 1.1)
 
-    underlying_prices = [x_min + (x_max - x_min) * i / 149 for i in range(150)]
+    return float(x_min), float(x_max)
 
-    combined_payoffs = []
-    combined_payoffs_pre = []
 
-    for s in underlying_prices:
-        total_profit = 0.0
-        total_profit_pre = 0.0
-        for opt in st.session_state.basket:
-            k = opt["strike"]
-            prem = opt["premium"]
-            qty = opt["quantity"]
-            act = opt["action"]
-            opt_type = opt["type"]
+def render_simulation_controls(max_dte, vol_change_val, rate_val):
+    st.markdown("<h4 style='font-family: Outfit; margin-top: 15px; margin-bottom: 5px;'>⚙️ 수익곡선 상세 시뮬레이션 제어</h4>", unsafe_allow_html=True)
+    col_sim1, col_sim2 = st.columns(2)
 
-            if opt_type == "Call" or opt_type.upper() == "C":
-                indiv_profit = max(s - k, 0.0) - prem
-            else:
-                indiv_profit = max(k - s, 0.0) - prem
+    # Ensure max_dte is at least 1 for the slider to have min_value < max_value
+    max_dte_val = max(1, int(max_dte))
 
-            if act == "Short":
-                indiv_profit = -indiv_profit
-            total_profit += indiv_profit * qty * 100
+    # Initialize or sanitize DTE session states
+    if "dte_slider" not in st.session_state:
+        st.session_state.dte_slider = max_dte_val
+    if "dte_num" not in st.session_state:
+        st.session_state.dte_num = max_dte_val
 
-            if st.session_state.underlying_price is not None:
-                t_target = min(days_to_expiry_val, opt["remn_cnt"]) / 365.0
-                iv = opt.get("iv", 0.30)
-                sigma_target = max(iv + vol_change_val, 0.0001)
-                expected_val = black_scholes(s, k, t_target, rate_val, sigma_target, opt_type)
+    if st.session_state.dte_slider > max_dte_val:
+        st.session_state.dte_slider = max_dte_val
+    if st.session_state.dte_num > max_dte_val:
+        st.session_state.dte_num = max_dte_val
 
-                if act == "Long":
-                    indiv_profit_pre = expected_val - prem
-                else:
-                    indiv_profit_pre = prem - expected_val
-                total_profit_pre += indiv_profit_pre * qty * 100
+    with col_sim1:
+        st.markdown("**⏱️ 잔존만기 일수 (DTE)**")
+        st.slider("DTE 슬라이더", min_value=0, max_value=max_dte_val, key="dte_slider", on_change=sync_widgets, args=("dte_slider", "dte_num"), label_visibility="collapsed")
+        days_to_expiry_val = st.number_input("DTE 정밀 입력 (일)", min_value=0, max_value=max_dte_val, step=1, key="dte_num", on_change=sync_widgets, args=("dte_num", "dte_slider"), label_visibility="collapsed")
 
-        combined_payoffs.append(total_profit)
-        if st.session_state.underlying_price is not None:
-            combined_payoffs_pre.append(total_profit_pre)
+    # 차트 시각화 범위에 맞추어 목표주가 슬라이더 범위 결정 (x_min, x_max)
+    x_min, x_max = get_simulation_price_range(rate_val)
+    if x_min >= x_max:
+        x_max = x_min + 1.0
+
+    # Determine default target value
+    default_val = st.session_state.get("underlying_price")
+    if default_val is None:
+        if st.session_state.basket:
+            default_val = st.session_state.basket[0]["strike"]
+        else:
+            default_val = (x_min + x_max) / 2.0
+    default_val = max(x_min, min(x_max, float(default_val)))
+
+    # Initialize or sanitize target session states
+    if "target_slider" not in st.session_state:
+        st.session_state.target_slider = default_val
+    if "target_num" not in st.session_state:
+        st.session_state.target_num = default_val
+
+    if st.session_state.target_slider < x_min or st.session_state.target_slider > x_max:
+        st.session_state.target_slider = default_val
+    if st.session_state.target_num < x_min or st.session_state.target_num > x_max:
+        st.session_state.target_num = default_val
+
+    with col_sim2:
+        st.markdown("**🎯 분석 목표 주가 ($)**")
+        st.slider("목표주가 슬라이더", min_value=x_min, max_value=x_max, key="target_slider", on_change=sync_widgets, args=("target_slider", "target_num"), label_visibility="collapsed")
+        target_underlying_val = st.number_input("목표주가 정밀 입력 ($)", min_value=x_min, max_value=x_max, step=0.01, key="target_num", on_change=sync_widgets, args=("target_num", "target_slider"), label_visibility="collapsed")
+
+    return days_to_expiry_val, target_underlying_val
+
+
+def render_analysis_chart_and_summary(vol_change_val, rate_val, days_to_expiry_val, target_underlying_val):
+    if st.session_state.underlying_price is not None:
+        recalculate_ivs(rate_val)
 
     fig = render_portfolio_payoff_chart(
         basket=st.session_state.basket,
