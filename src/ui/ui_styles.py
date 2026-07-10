@@ -74,6 +74,19 @@ def inject_app_styles() -> None:
                 stroke: #5A626A !important;
                 fill: #5A626A !important;
             }
+
+            /* 모바일 및 PC 대응용 검색 버튼 스페이서 */
+            @media (min-width: 768px) {
+                .search-btn-spacer {
+                    margin-top: 28px;
+                }
+            }
+            @media (max-width: 767px) {
+                .search-btn-spacer {
+                    margin-top: 0px;
+                    margin-bottom: 10px;
+                }
+            }
         </style>
         """,
         unsafe_allow_html=True,

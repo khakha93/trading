@@ -8,6 +8,7 @@ payoff_diagram.png
 
 # documents
 *.xlsx
+docs/next_steps_implementation_guide.md
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -227,3 +228,4 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+

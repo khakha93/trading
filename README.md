@@ -46,9 +46,10 @@ CUST_TYPE=P
 드롭다운을 통한 간편한 옵션 검색과 마우스 오버 툴팁이 활성화된 Plotly 그래프 및 실시간 파라미터 시뮬레이션을 제공하는 GUI 화면을 실행합니다.
 
 ```bash
+# 가상 환경(trading_env) 활성화 후 실행
 python run_app.py
 ```
-실행 후 브라우저에서 **http://localhost:8501** 로 자동 접속됩니다.
+실행 후 브라우저에서 **http://localhost:8502** 로 자동 접속됩니다.
 
 ---
 

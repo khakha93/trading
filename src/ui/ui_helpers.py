@@ -157,3 +157,14 @@ def ensure_master_file_ready():
             pass
 
     threading.Thread(target=_download_master_file, daemon=True).start()
+
+
+def get_ticker_from_symbol(symbol: str) -> str:
+    """옵션 기호(Symbol) 문자열에서 종목 티커(Ticker) 추출"""
+    import re
+    # 만기월코드(1글자)와 만기연도(2자리 숫자)에 해당하는 접미사(예: N26)를 매칭하여 
+    # 앞쪽의 순수 티커 부분(예: TSLA)만 정확히 캡처합니다.
+    match = re.match(r"(?:\d?)([A-Z]+)(?:[A-Z]\d{2})", symbol)
+    if match:
+        return match.group(1).upper()
+    return ""

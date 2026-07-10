@@ -50,55 +50,31 @@ def render_sidebar():
 
     if not check_api_keys():
         st.sidebar.warning("프로젝트 루트의 `.env` 파일에 APP_KEY와 APP_SECRET을 입력해 주세요.")
-    else:
-        if st.sidebar.button("🔄 실시간 시세 동기화 (Refresh)", use_container_width=True):
-            if st.session_state.basket:
-                with st.sidebar.spinner("실시간 시세 동기화 중..."):
-                    update_basket_prices()
-                    current_rate = st.session_state.get("rate_num", 4.0) / 100.0
-                    recalculate_ivs(current_rate)
-                st.sidebar.success("시세 동기화 완료!")
-                st.rerun()
+
+    if "default_risk_free_rate" not in st.session_state:
+        # 최초 앱 구동 시 딱 한 번만 미국 3개월 국채 금리(^IRX) 실시간 조회 및 캐싱 (Rerun 성능 확보)
+        try:
+            import yfinance as yf
+            irx = yf.Ticker("^IRX")
+            hist = irx.history(period="1d")
+            if not hist.empty:
+                st.session_state.default_risk_free_rate = float(hist["Close"].iloc[-1])
             else:
-                st.sidebar.info("바스켓에 등록된 옵션이 없습니다.")
+                st.session_state.default_risk_free_rate = 4.0
+        except Exception:
+            st.session_state.default_risk_free_rate = 4.0
 
-    max_dte = 30
-    if st.session_state.basket:
-        max_dte = max(opt.get("remn_cnt", 30) for opt in st.session_state.basket)
-
-    if "dte_slider" not in st.session_state:
-        st.session_state.dte_slider = int(max_dte)
-    if "dte_num" not in st.session_state:
-        st.session_state.dte_num = int(max_dte)
-
-    if "vol_slider" not in st.session_state:
-        st.session_state.vol_slider = 0.0
-    if "vol_num" not in st.session_state:
-        st.session_state.vol_num = 0.0
+    default_rate = st.session_state.default_risk_free_rate
 
     if "rate_slider" not in st.session_state:
-        st.session_state.rate_slider = 4.0
+        st.session_state.rate_slider = default_rate
     if "rate_num" not in st.session_state:
-        st.session_state.rate_num = 4.0
+        st.session_state.rate_num = default_rate
 
-    if st.session_state.dte_slider > int(max_dte):
-        st.session_state.dte_slider = int(max_dte)
-    if st.session_state.dte_num > int(max_dte):
-        st.session_state.dte_num = int(max_dte)
-
-    st.sidebar.write("### 🎛️ 시뮬레이션 파라미터")
-
-    st.sidebar.write("**⚡ 내재변동성(IV) 변화율 (%p)**")
-    st.sidebar.slider("IV 슬라이더", min_value=-50.0, max_value=50.0, key="vol_slider", on_change=sync_widgets, args=("vol_slider", "vol_num"), label_visibility="collapsed")
-    vol_input_val = st.sidebar.number_input("IV 정밀 입력 (%p)", min_value=-50.0, max_value=50.0, step=0.1, key="vol_num", on_change=sync_widgets, args=("vol_num", "vol_slider"), label_visibility="collapsed")
-    vol_change_val = vol_input_val / 100.0
+    st.sidebar.write("### 🎛️ 글로벌 설정")
 
     st.sidebar.write("**💵 무위험 이자율 (%)**")
     st.sidebar.slider("이자율 슬라이더", min_value=0.0, max_value=10.0, key="rate_slider", on_change=sync_widgets, args=("rate_slider", "rate_num"), label_visibility="collapsed")
     rate_input_val = st.sidebar.number_input("이자율 정밀 입력 (%)", min_value=0.0, max_value=10.0, step=0.01, key="rate_num", on_change=sync_widgets, args=("rate_num", "rate_slider"), label_visibility="collapsed")
     rate_val = rate_input_val / 100.0
-
-    st.sidebar.markdown("---")
-    st.sidebar.info("💡 **팁**: 대화형 Plotly 그래프 위에 마우스를 올리면 각 지점의 구체적인 만기 손익과 만기 전 예상 손익 정보를 툴팁으로 확인할 수 있습니다.")
-
-    return vol_change_val, rate_val
+    return rate_val

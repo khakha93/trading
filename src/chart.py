@@ -65,13 +65,25 @@ def render_portfolio_payoff_chart(basket, underlying_price=None, rate=0.04, vol_
                         indiv_profit_pre = expected_val - prem
                     else:
                         indiv_profit_pre = prem - expected_val
-                    total_profit_pre += indiv_profit_pre * qty * 100
+                else:
+                    # 만기 시점과 동일하게 내재가치로 처리하여 t_target == 0일 때 0.0 고정 방지
+                    if opt_type == "Call" or opt_type.upper() == "C":
+                        indiv_profit_pre = max(s - k, 0.0) - prem
+                    else:
+                        indiv_profit_pre = max(k - s, 0.0) - prem
+                    if act == "Short":
+                        indiv_profit_pre = -indiv_profit_pre
+                total_profit_pre += indiv_profit_pre * qty * 100
 
         combined_payoffs.append(total_profit)
         if underlying_price is not None:
             combined_payoffs_pre.append(total_profit_pre)
 
     def find_beps(prices, payoffs):
+        # 만약 모든 payoffs가 0.0에 수렴하면 BEP를 그리지 않음 (수치 노이즈 방지)
+        if all(abs(y) < 1e-4 for y in payoffs):
+            return []
+
         beps_list = []
         for i in range(len(payoffs) - 1):
             y1, y2 = payoffs[i], payoffs[i + 1]
@@ -79,8 +91,11 @@ def render_portfolio_payoff_chart(basket, underlying_price=None, rate=0.04, vol_
             if y1 * y2 < 0:
                 bep_x = x1 - y1 * (x2 - x1) / (y2 - y1)
                 beps_list.append(bep_x)
-            elif y1 == 0:
+            elif y1 == 0 and y2 != 0:
                 beps_list.append(x1)
+        if len(payoffs) > 0 and payoffs[-1] == 0:
+            if len(payoffs) > 1 and payoffs[-2] != 0:
+                beps_list.append(prices[-1])
         return sorted(list(set(round(b, 2) for b in beps_list)))
 
     fig = go.Figure()
@@ -102,23 +117,55 @@ def render_portfolio_payoff_chart(basket, underlying_price=None, rate=0.04, vol_
         )
 
     beps_exp = find_beps(underlying_prices, combined_payoffs)
-    for idx, bep in enumerate(beps_exp):
+    for bep in beps_exp:
         fig.add_vline(
             x=bep,
-            line=dict(color="#FFA726", width=1.5, dash="dot"),
-            annotation_text=f" 만기 BEP (${bep:.2f})",
-            annotation_position="bottom left",
-            annotation_font=dict(color="#FFA726", size=10)
+            line=dict(color="#FFA726", width=1.5, dash="dot")
         )
+
+    # 🟠 만기 BEP 범례 추가
+    fig.add_trace(go.Scatter(
+        x=[None],
+        y=[None],
+        mode="lines",
+        name=f"🟠 만기 BEP: " + (", ".join(f"${bep:.2f}" for bep in beps_exp) if beps_exp else "없음"),
+        line=dict(color="#FFA726", width=1.5, dash="dot"),
+        showlegend=True
+    ))
+
+    if underlying_price is not None and combined_payoffs_pre:
+        beps_pre = find_beps(underlying_prices, combined_payoffs_pre)
+        for bep in beps_pre:
+            fig.add_vline(
+                x=bep,
+                line=dict(color="#29B6F6", width=1.5, dash="dashdot")
+            )
+        
+        # 🔵 만기 전 BEP 범례 추가
+        fig.add_trace(go.Scatter(
+            x=[None],
+            y=[None],
+            mode="lines",
+            name=f"🔵 만기 전 BEP: " + (", ".join(f"${bep:.2f}" for bep in beps_pre) if beps_pre else "없음"),
+            line=dict(color="#29B6F6", width=1.5, dash="dashdot"),
+            showlegend=True
+        ))
 
     if underlying_price is not None:
         fig.add_vline(
             x=underlying_price,
-            line=dict(color="#00E676", width=1.5, dash="dash"),
-            annotation_text=f" 현재가 (${underlying_price:.2f})",
-            annotation_position="top left",
-            annotation_font=dict(color="#00E676")
+            line=dict(color="#00E676", width=1.5, dash="dash")
         )
+
+        # 🟢 기초자산 현재가 범례 추가
+        fig.add_trace(go.Scatter(
+            x=[None],
+            y=[None],
+            mode="lines",
+            name=f"🟢 기초자산 현재가: ${underlying_price:.2f}",
+            line=dict(color="#00E676", width=1.5, dash="dash"),
+            showlegend=True
+        ))
 
     if combined_payoffs_pre:
         fig.add_trace(go.Scatter(x=underlying_prices, y=combined_payoffs, mode="lines", name="만기 시 손익 (Expiration)", line=dict(color="#7F8C8D", width=2.8), hoverinfo="skip"))

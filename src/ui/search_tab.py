@@ -1,27 +1,39 @@
 import datetime
 import streamlit as st
 import pandas as pd
+import yfinance as yf
 
 from src.master import get_option_chain, get_underlying_info
 from src.kis_client import fetch_stock_price
 from src.pricing import black_scholes
 from src.ui.ui_helpers import fetch_token, get_single_option_premium, should_search_ticker
 
-
-def render_search_tab(vol_change_val, rate_val):
+def render_search_tab(rate_val):
     st.subheader("🔍 미국주식옵션 검색")
 
-    col_search1, col_search2 = st.columns([4, 1])
-    search_ticker = col_search1.text_input(
-        "기초자산 Ticker 입력 (예: AAPL, PG, TSLA, NVDA)",
-        value="",
-        key="search_ticker_input"
-    ).upper().strip()
+    # CSS를 주입하여 입력창에서 소문자를 타이핑하는 순간 즉시 대문자로 보이게 처리 (실시간 시각 변환)
+    st.markdown("""
+        <style>
+        div[data-testid="stForm"] input {
+            text-transform: uppercase;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+    with st.form(key="search_form", border=False):
+        col_search1, col_search2 = st.columns([4, 1])
+        search_ticker = col_search1.text_input(
+            "기초자산 Ticker 입력 (예: AAPL, PG, TSLA, NVDA)",
+            value="",
+            key="search_ticker_input"
+        ).upper().strip()
+
+        col_search2.markdown("<div class='search-btn-spacer'></div>", unsafe_allow_html=True)
+        search_clicked = col_search2.form_submit_button("종목 검색", type="primary", use_container_width=True)
 
     if "last_search_ticker" not in st.session_state:
         st.session_state.last_search_ticker = ""
 
-    search_clicked = col_search2.button("종목 검색", type="primary", use_container_width=True)
     should_search = should_search_ticker(search_ticker, search_clicked=search_clicked)
 
     if should_search:
@@ -169,19 +181,95 @@ def render_search_tab(vol_change_val, rate_val):
             except ValueError:
                 st.caption("⚠️ 올바른 필터 형식을 입력해 주세요. (예: '170-180', '>175', '170, 180')")
 
-        grid_data = []
+        # yfinance를 사용하여 15분 지연된 전체 옵션 체인의 변동성 정보 로드 및 캐싱
+        cache_key = f"yf_opts_{search_ticker}_{sel_expiry}"
+        if cache_key not in st.session_state:
+            try:
+                stock = yf.Ticker(search_ticker)
+                opt_chain = stock.option_chain(sel_expiry)
+                calls_dict = {row["strike"]: row for _, row in opt_chain.calls.iterrows()}
+                puts_dict = {row["strike"]: row for _, row in opt_chain.puts.iterrows()}
+                st.session_state[cache_key] = {"calls": calls_dict, "puts": puts_dict}
+            except Exception as e:
+                st.session_state[cache_key] = None
+        
+        yf_data = st.session_state.get(cache_key)
+
+        # 실시간 ATM 옵션의 IV를 샘플링하여 보정 계수(Calibration Factor) 계산
+        calibration_factor = 1.0
+        avg_real_iv = 0.30
+        
         today = datetime.date.today()
+        try:
+            exp_dt = datetime.datetime.strptime(sel_expiry, "%Y-%m-%d").date()
+            remn_cnt = max(0, (exp_dt - today).days)
+        except Exception:
+            remn_cnt = 30
+        t_annual = max(1, remn_cnt) / 365.0
+
+        if spot and spot > 0 and closest_strike:
+            # ATM 콜/풋 옵션 코드 찾기
+            atm_call_opt = None
+            atm_put_opt = None
+            for opt in filtered_opts:
+                if opt["strike"] == closest_strike:
+                    if opt["type"] == "Call":
+                        atm_call_opt = opt
+                    elif opt["type"] == "Put":
+                        atm_put_opt = opt
+
+            # KIS API로 실시간 시세 조회 (캐싱 활용)
+            if "queried_real_prices" not in st.session_state:
+                st.session_state.queried_real_prices = {}
+
+            if atm_call_opt and atm_call_opt["symbol"] not in st.session_state.queried_real_prices:
+                real_prem_call, _ = get_single_option_premium(atm_call_opt["symbol"])
+                if real_prem_call > 0:
+                    st.session_state.queried_real_prices[atm_call_opt["symbol"]] = real_prem_call
+
+            if atm_put_opt and atm_put_opt["symbol"] not in st.session_state.queried_real_prices:
+                real_prem_put, _ = get_single_option_premium(atm_put_opt["symbol"])
+                if real_prem_put > 0:
+                    st.session_state.queried_real_prices[atm_put_opt["symbol"]] = real_prem_put
+
+            # 실시간 IV 계산 및 yfinance 지연 IV와 비교
+            from src.pricing import implied_volatility
+            real_ivs = []
+            delayed_ivs = []
+
+            if atm_call_opt:
+                real_price = st.session_state.queried_real_prices.get(atm_call_opt["symbol"])
+                if real_price and real_price > 0:
+                    real_iv_call = implied_volatility(real_price, spot, closest_strike, t_annual, rate_val, "Call")
+                    if real_iv_call > 0:
+                        real_ivs.append(real_iv_call)
+                        if yf_data and closest_strike in yf_data["calls"]:
+                            delayed_ivs.append(max(0.01, yf_data["calls"][closest_strike]["impliedVolatility"]))
+                        else:
+                            delayed_ivs.append(0.30)
+
+            if atm_put_opt:
+                real_price = st.session_state.queried_real_prices.get(atm_put_opt["symbol"])
+                if real_price and real_price > 0:
+                    real_iv_put = implied_volatility(real_price, spot, closest_strike, t_annual, rate_val, "Put")
+                    if real_iv_put > 0:
+                        real_ivs.append(real_iv_put)
+                        if yf_data and closest_strike in yf_data["puts"]:
+                            delayed_ivs.append(max(0.01, yf_data["puts"][closest_strike]["impliedVolatility"]))
+                        else:
+                            delayed_ivs.append(0.30)
+
+            if real_ivs and delayed_ivs:
+                avg_real_iv = sum(real_ivs) / len(real_ivs)
+                avg_delayed_iv = sum(delayed_ivs) / len(delayed_ivs)
+                if avg_delayed_iv > 0:
+                    calibration_factor = avg_real_iv / avg_delayed_iv
+
+        grid_data = []
         for strike in sorted_strikes:
             call_opt = strike_map[strike]["Call"]
             put_opt = strike_map[strike]["Put"]
             is_atm = " (ATM)" if closest_strike and strike == closest_strike else ""
-
-            try:
-                exp_dt = datetime.datetime.strptime(sel_expiry, "%Y-%m-%d").date()
-                remn_cnt = max(0, (exp_dt - today).days)
-            except Exception:
-                remn_cnt = 30
-            t_annual = max(1, remn_cnt) / 365.0
 
             call_price_str = "N/A"
             call_symbol = ""
@@ -193,7 +281,13 @@ def render_search_tab(vol_change_val, rate_val):
                     real_price = st.session_state.queried_real_prices[call_symbol]
                     call_price_str = f"${real_price:.2f} (실시간)"
                 elif spot and spot > 0:
-                    bs_price = black_scholes(spot, strike, t_annual, rate_val, 0.30, "Call")
+                    baseline_iv = 0.30
+                    if yf_data and strike in yf_data["calls"]:
+                        baseline_iv = yf_data["calls"][strike]["impliedVolatility"]
+                    if baseline_iv < 0.01:
+                        baseline_iv = avg_real_iv
+                    calibrated_iv = max(0.0001, baseline_iv * calibration_factor)
+                    bs_price = black_scholes(spot, strike, t_annual, rate_val, calibrated_iv, "Call")
                     call_price_str = f"${bs_price:.2f}"
 
             put_price_str = "N/A"
@@ -206,7 +300,13 @@ def render_search_tab(vol_change_val, rate_val):
                     real_price = st.session_state.queried_real_prices[put_symbol]
                     put_price_str = f"${real_price:.2f} (실시간)"
                 elif spot and spot > 0:
-                    bs_price = black_scholes(spot, strike, t_annual, rate_val, 0.30, "Put")
+                    baseline_iv = 0.30
+                    if yf_data and strike in yf_data["puts"]:
+                        baseline_iv = yf_data["puts"][strike]["impliedVolatility"]
+                    if baseline_iv < 0.01:
+                        baseline_iv = avg_real_iv
+                    calibrated_iv = max(0.0001, baseline_iv * calibration_factor)
+                    bs_price = black_scholes(spot, strike, t_annual, rate_val, calibrated_iv, "Put")
                     put_price_str = f"${bs_price:.2f}"
 
             grid_data.append({
@@ -346,6 +446,7 @@ def render_search_tab(vol_change_val, rate_val):
                             if row["put_symbol"]:
                                 add_option(row["put_symbol"], "Put", float(row["raw_strike"]), row["put_expiry_code"])
 
+                    st.session_state.selected_ticker = search_ticker
                     st.success(f"성공적으로 바스켓에 추가/업데이트 되었습니다: {', '.join(success_symbols)}")
                     st.rerun()
         else:

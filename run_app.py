@@ -15,7 +15,7 @@ def main() -> int:
     project_root = os.path.dirname(os.path.abspath(__file__))
     os.environ["PYTHONPATH"] = os.pathsep.join(filter(None, [project_root, os.environ.get("PYTHONPATH", "")]))
 
-    cmd = [sys.executable, "-m", "streamlit", "run", "app.py", "--server.headless", "true", "--server.port", "8502"]
+    cmd = [sys.executable, "-m", "streamlit", "run", "app.py", "--server.port", "8502"]
     env = os.environ.copy()
     env.setdefault("SSL_CERT_FILE", os.environ.get("SSL_CERT_FILE", ""))
     env.setdefault("REQUESTS_CA_BUNDLE", os.environ.get("REQUESTS_CA_BUNDLE", ""))
