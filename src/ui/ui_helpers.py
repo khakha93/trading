@@ -28,62 +28,210 @@ def fetch_token():
         st.error(f"API 접근 토큰 발급 중 오류 발생: {e}")
     return st.session_state.token
 
+def safe_float(val):
+    if not val:
+        return 0.0
+    try:
+        return float(str(val).strip())
+    except ValueError:
+        return 0.0
+
 
 def get_single_option_premium(symbol):
-    token = fetch_token()
-    if not token:
-        return 1.0, 30
+    token = None
     try:
-        price_res = fetch_option_price(token, symbol)
-        if price_res and price_res.get("rt_cd") == "0":
-            output = price_res.get("output1", {})
-            premium = get_effective_premium(output)
-            remn_cnt_str = output.get("remn_cnt", "").strip()
-            remn_cnt = int(remn_cnt_str) if remn_cnt_str.isdigit() else 30
-            return premium, remn_cnt
-    except Exception as e:
-        st.warning(f"'{symbol}' 시세 조회 중 오류 발생: {e}. 기본값으로 설정합니다.")
-    return 1.0, 30
+        token = fetch_token()
+    except Exception:
+        pass
 
+    premium = 0.0
+    remn_cnt = 30
+    details = {"bid": 0.0, "ask": 0.0, "last": 0.0, "premium": 0.0, "is_mid": False}
 
-def update_basket_prices():
-    token = fetch_token()
-    if not token or not st.session_state.basket:
-        return
-
-    first_opt = st.session_state.basket[0]
-    underlying_info = get_underlying_info(first_opt["symbol"])
-    if underlying_info:
-        st.session_state.underlying_info = underlying_info
+    # 1. Try KIS API first
+    if token:
         try:
-            stock_res = fetch_stock_price(token, underlying_info["exchange"], underlying_info["ticker"])
-            if stock_res and stock_res.get("rt_cd") == "0":
-                st.session_state.underlying_price = float(stock_res["output"]["last"])
-        except Exception as e:
-            st.error(f"기초자산 시세 조회 실패: {e}")
-
-    for opt in st.session_state.basket:
-        try:
-            price_res = fetch_option_price(token, opt["symbol"])
+            price_res = fetch_option_price(token, symbol)
             if price_res and price_res.get("rt_cd") == "0":
                 output = price_res.get("output1", {})
                 premium = get_effective_premium(output)
-                opt["premium"] = premium
                 remn_cnt_str = output.get("remn_cnt", "").strip()
-                if remn_cnt_str.isdigit():
-                    opt["remn_cnt"] = int(remn_cnt_str)
+                remn_cnt = int(remn_cnt_str) if remn_cnt_str.isdigit() else 30
+                
+                bid = safe_float(output.get('bid_price'))
+                ask = safe_float(output.get('ask_price'))
+                last = safe_float(output.get('last_price'))
+                details = {
+                    "bid": bid,
+                    "ask": ask,
+                    "last": last,
+                    "premium": premium,
+                    "is_mid": (bid > 0 and ask > 0),
+                    "remn_cnt": remn_cnt
+                }
+        except Exception:
+            pass
+
+    # 2. Fallback to yfinance if KIS API query fails or returns invalid price
+    if premium <= 0.0:
+        try:
+            opt = None
+            if "options_list" in st.session_state and st.session_state.options_list:
+                for o in st.session_state.options_list:
+                    if o["symbol"] == symbol:
+                        opt = o
+                        break
+            if not opt and "basket" in st.session_state and st.session_state.basket:
+                for o in st.session_state.basket:
+                    if o["symbol"] == symbol:
+                        opt = o
+                        break
+            if not opt:
+                from src.master import get_option_chain
+                ticker = get_ticker_from_symbol(symbol)
+                if ticker:
+                    options = get_option_chain(ticker)
+                    for o in options:
+                        if o["symbol"] == symbol:
+                            opt = o
+                            break
+
+            if opt and opt.get("expiry_date") and opt["expiry_date"] != "Unknown":
+                ticker = get_ticker_from_symbol(symbol)
+                expiry_date = opt["expiry_date"]
+                opt_type = opt["type"]
+                strike = opt["strike"]
+
+                import yfinance as yf
+                stock = yf.Ticker(ticker)
+                opt_chain = stock.option_chain(expiry_date)
+                df = opt_chain.calls if opt_type == "Call" else opt_chain.puts
+                row = df[df["strike"] == strike]
+                if not row.empty:
+                    premium = float(row.iloc[0]["lastPrice"])
+                    bid = float(row.iloc[0].get("bid", 0.0))
+                    ask = float(row.iloc[0].get("ask", 0.0))
+                    import datetime
+                    try:
+                        exp_dt = datetime.datetime.strptime(expiry_date, "%Y-%m-%d").date()
+                        remn_cnt = max(0, (exp_dt - datetime.date.today()).days)
+                    except Exception:
+                        pass
+                    
+                    details = {
+                        "bid": bid,
+                        "ask": ask,
+                        "last": premium,
+                        "premium": premium,
+                        "is_mid": (bid > 0 and ask > 0),
+                        "remn_cnt": remn_cnt
+                    }
+        except Exception:
+            pass
+
+    # 3. Final fallback
+    if premium <= 0.0:
+        premium = 1.0
+        remn_cnt = 30
+        details = {"bid": 0.0, "ask": 0.0, "last": 1.0, "premium": 1.0, "is_mid": False, "remn_cnt": remn_cnt}
+
+    return premium, remn_cnt, details
+
+
+def update_basket_prices():
+    if not st.session_state.basket:
+        return
+
+    token = None
+    try:
+        token = fetch_token()
+    except Exception:
+        pass
+
+    first_opt = st.session_state.basket[0]
+    underlying_ticker = get_ticker_from_symbol(first_opt["symbol"])
+    if underlying_ticker:
+        underlying_price = None
+        underlying_info = get_underlying_info(first_opt["symbol"])
+        
+        # Try KIS API first
+        if token and underlying_info:
+            st.session_state.underlying_info = underlying_info
+            try:
+                stock_res = fetch_stock_price(token, underlying_info["exchange"], underlying_info["ticker"])
+                if stock_res and stock_res.get("rt_cd") == "0":
+                    underlying_price = float(stock_res["output"]["last"])
+            except Exception:
+                pass
+
+        # Try yfinance fallback for stock price
+        if underlying_price is None:
+            try:
+                import yfinance as yf
+                stock = yf.Ticker(underlying_ticker)
+                spot_val = stock.fast_info.get("lastPrice")
+                if spot_val is not None:
+                    underlying_price = float(spot_val)
+                else:
+                    hist = stock.history(period="1d")
+                    if not hist.empty:
+                        underlying_price = float(hist["Close"].iloc[-1])
+            except Exception:
+                pass
+
+        if underlying_price is not None:
+            st.session_state.underlying_price = underlying_price
+            if underlying_info:
+                st.session_state.underlying_info = underlying_info
             else:
-                st.error(f"'{opt['symbol']}' API 조회 실패: {price_res.get('msg1') if price_res else '응답 없음'}")
+                st.session_state.underlying_info = {"exchange": "UNKNOWN", "ticker": underlying_ticker}
+
+    for opt in st.session_state.basket:
+        try:
+            premium, remn_cnt, _ = get_single_option_premium(opt["symbol"])
+            opt["premium"] = premium
+            opt["remn_cnt"] = remn_cnt
         except Exception as e:
             st.error(f"'{opt['symbol']}' 시세 갱신 중 오류 발생: {e}")
 
 
 def recalculate_ivs(rate):
-    S_current = st.session_state.underlying_price
+    # Determine the stock price at which the options premiums in the basket were set.
+    # If the market is closed, we should solve for IV using the previous day's close price (prev_close) if available,
+    # so that the solved IV is not distorted by today's after-hours/pre-market stock price movements.
+    
+    info = st.session_state.get("underlying_info")
+    prev_close = info.get("prev_close") if info else None
+    
+    override_active = st.session_state.get("analysis_price_override_active", False)
+    override_val = st.session_state.get("analysis_price_override_val")
+    spot_live = st.session_state.get("underlying_price")
+    
+    if override_active and override_val is not None:
+        S_current = override_val
+    elif prev_close is not None and prev_close > 0:
+        S_current = prev_close
+    else:
+        S_current = spot_live
+
     if S_current is None or S_current <= 0:
         return
     for opt in st.session_state.basket:
-        t_current = float(opt.get("remn_cnt", 30)) / 365.0
+        # If we solve IV using yesterday's close stock price (prev_close), the options premium is also from yesterday,
+        # so we must use yesterday's DTE (today's DTE + 1) to avoid solving IV with T near 0.
+        if S_current == prev_close and prev_close is not None and prev_close > 0:
+            import pytz
+            import datetime
+            est = pytz.timezone("America/New_York")
+            ny_time = datetime.datetime.now(est)
+            is_market_open = (ny_time.weekday() < 5 and 
+                              datetime.time(9, 30) <= ny_time.time() <= datetime.time(16, 0))
+            is_market_closed = not is_market_open
+            opt_dte = opt["remn_cnt"] + (1 if is_market_closed else 0)
+        else:
+            opt_dte = opt["remn_cnt"]
+            
+        t_current = float(max(0.05, opt_dte)) / 365.0
         iv = implied_volatility(
             market_price=opt["premium"],
             S=S_current,
@@ -115,8 +263,12 @@ def initialize_session_state():
         "basket": [],
         "underlying_price": None,
         "underlying_info": None,
+        "search_underlying_price": None,
+        "search_underlying_info": None,
         "token": None,
         "queried_real_prices": {},
+        "user_queried_symbols": set(),
+        "valuation_mode": "Mode A",
         "master_download_started": False,
         "master_status": "idle",
         "last_search_ticker": None,

@@ -72,7 +72,7 @@ def render_sidebar():
         st.session_state.rate_num = default_rate
 
     st.sidebar.write("### 🎛️ 글로벌 설정")
-
+    
     st.sidebar.write("**💵 무위험 이자율 (%)**")
     st.sidebar.slider("이자율 슬라이더", min_value=0.0, max_value=10.0, key="rate_slider", on_change=sync_widgets, args=("rate_slider", "rate_num"), label_visibility="collapsed")
     rate_input_val = st.sidebar.number_input("이자율 정밀 입력 (%)", min_value=0.0, max_value=10.0, step=0.01, key="rate_num", on_change=sync_widgets, args=("rate_num", "rate_slider"), label_visibility="collapsed")

@@ -157,9 +157,6 @@ def get_effective_premium(output):
 
     if bid > 0 and ask > 0:
         mid = (bid + ask) / 2.0
-        spread = ask - bid
-        if spread > (mid * 0.5):
-            print(f"[!] 경고: 호가 스프레드가 너무 넓습니다 (Bid: {bid:.2f}, Ask: {ask:.2f}). 중간가({mid:.2f})의 신뢰도가 낮을 수 있습니다.")
         return mid
 
     if last > 0:

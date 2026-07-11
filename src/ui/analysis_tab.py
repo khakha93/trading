@@ -39,13 +39,19 @@ def render_basket_overview():
     )
     st.session_state.selected_ticker = sel_ticker
 
-    # 선택된 티커의 기초자산 시세가 없거나 다른 경우 KIS API로 실시간 갱신 (자가 치유)
+    # 선택된 티커의 기초자산 시세가 없거나 다른 경우 KIS API 또는 yfinance로 갱신 (자가 치유)
     if (st.session_state.underlying_price is None or 
         st.session_state.get("underlying_info", {}).get("ticker") != sel_ticker):
+        
+        st.session_state.analysis_price_override_active = False
+        st.session_state.analysis_price_override_val = None
+        st.session_state.analysis_price_override_active_checkbox = False
+        st.session_state.analysis_price_override_val_input = None
         
         first_opt = next(opt for opt in st.session_state.basket if get_ticker_from_symbol(opt["symbol"]) == sel_ticker)
         from src.master import get_underlying_info
         from src.ui.ui_helpers import fetch_token
+        import yfinance as yf
         
         underlying_info = get_underlying_info(first_opt["symbol"])
         token = fetch_token()
@@ -57,22 +63,129 @@ def render_basket_overview():
                     stock_res = fetch_stock_price(token, underlying_info["exchange"], underlying_info["ticker"])
                     if stock_res and stock_res.get("rt_cd") == "0":
                         st.session_state.underlying_price = float(stock_res["output"]["last"])
+                        st.session_state.underlying_info["prev_close"] = float(stock_res["output"]["base"])
+            except Exception:
+                pass
+            
+            # Fetch previous close from yfinance as fallback
+            try:
+                stock = yf.Ticker(sel_ticker)
+                prev_close_val = stock.fast_info.get("previousClose")
+                if prev_close_val:
+                    st.session_state.underlying_info["prev_close"] = float(prev_close_val)
+                
+                if st.session_state.underlying_price is None:
+                    spot_val = stock.fast_info.get("lastPrice")
+                    if spot_val is not None:
+                        st.session_state.underlying_price = float(spot_val)
+                    else:
+                        hist = stock.history(period="1d")
+                        if not hist.empty:
+                            st.session_state.underlying_price = float(hist["Close"].iloc[-1])
             except Exception:
                 pass
 
-    if st.session_state.underlying_price is not None:
-        st.markdown(f"""
-        <div style="display: inline-block; border: 1.5px solid #FF1744; border-radius: 20px; padding: 6px 18px; background-color: rgba(255, 23, 68, 0.08); color: #FF1744; font-family: Outfit; font-weight: 700; font-size: 1.05rem; margin-top: 5px; margin-bottom: 15px; box-shadow: 0 4px 12px rgba(255, 23, 68, 0.15);">
-            📊 {sel_ticker} 현재가: ${st.session_state.underlying_price:.2f}
-        </div>
-        """, unsafe_allow_html=True)
+        # 장마감 상태인 경우, 옵션 종가 기준 시점의 기초자산 주가는 현재가(lastPrice)인 underlying_price가 됩니다.
+        if st.session_state.underlying_price is not None and st.session_state.underlying_info is not None:
+            import pytz
+            est = pytz.timezone("America/New_York")
+            ny_time = datetime.datetime.now(est)
+            is_market_open = (ny_time.weekday() < 5 and 
+                              datetime.time(9, 30) <= ny_time.time() <= datetime.time(16, 0))
+            is_market_closed = not is_market_open
+            if is_market_closed:
+                st.session_state.underlying_info["prev_close"] = st.session_state.underlying_price
+
+    spot_live = st.session_state.underlying_price
+    underlying_info = st.session_state.get("underlying_info")
+    
+    # 1. Price simulation control panel for Portfolio Analysis
+    if spot_live is not None:
+        with st.expander("📈 분석 기준 주가 시뮬레이션 및 조정 (장마감 대응)", expanded=False):
+            st.markdown("<p style='font-size: 0.85rem; color: #8888aa; margin-bottom: 15px;'>장마감 시점이나 프리마켓 거래 시 옵션 거래 체결가와 실시간 주가 사이에 시간차가 생겨 분석이 왜곡될 수 있습니다. 분석 기준 주가를 수동으로 고정하거나 조정해 보세요.</p>", unsafe_allow_html=True)
+            col_an_sim1, col_an_sim2 = st.columns([1, 1])
+            
+            override_active = col_an_sim1.checkbox(
+                "분석 기준 주가 수동 설정 활성화",
+                key="analysis_price_override_active_checkbox"
+            )
+            st.session_state.analysis_price_override_active = override_active
+            
+            if "analysis_price_override_val_input" not in st.session_state or st.session_state.analysis_price_override_val_input is None:
+                st.session_state.analysis_price_override_val_input = spot_live
+                
+            sim_price = col_an_sim1.number_input(
+                "시뮬레이션 분석 주가 ($)",
+                min_value=0.01,
+                step=0.01,
+                key="analysis_price_override_val_input",
+                disabled=not override_active
+            )
+            st.session_state.analysis_price_override_val = sim_price
+            
+            prev_close_val = underlying_info.get("prev_close") if underlying_info else None
+            btn_prev_label = f"전일 종가로 맞추기 (${prev_close_val:.2f})" if prev_close_val else "전일 종가로 맞추기"
+            
+            if col_an_sim2.button(btn_prev_label, key="btn_prev_analysis", use_container_width=True, disabled=not prev_close_val):
+                st.session_state.analysis_price_override_active_checkbox = True
+                st.session_state.analysis_price_override_val_input = prev_close_val
+                st.rerun()
+                
+            if col_an_sim2.button("실시간 현재가로 복원", key="btn_restore_analysis", use_container_width=True):
+                st.session_state.analysis_price_override_active_checkbox = False
+                st.session_state.analysis_price_override_val_input = spot_live
+                st.rerun()
+
+        # Define active spot price
+        override_active = st.session_state.get("analysis_price_override_active", False)
+        override_val = st.session_state.get("analysis_price_override_val")
+        
+        val_mode = st.session_state.get("valuation_mode", "Mode A")
+        prev_close_val = underlying_info.get("prev_close") if underlying_info else None
+        
+        if override_active and override_val is not None:
+            spot_active = override_val
+        elif val_mode == "Mode A" and prev_close_val and prev_close_val > 0:
+            spot_active = prev_close_val
+        else:
+            spot_active = spot_live
+        
+        # 2. Display Price Banner
+        if override_active:
+            st.markdown(f"""
+            <div style="display: inline-block; border: 1.5px solid #FF8F00; border-radius: 20px; padding: 6px 18px; background-color: rgba(255, 143, 0, 0.08); color: #FF8F00; font-family: Outfit; font-weight: 700; font-size: 1.05rem; margin-top: 5px; margin-bottom: 15px; box-shadow: 0 4px 12px rgba(255, 143, 0, 0.15);">
+                ⚠️ 분석 기준가 (수동보정): ${spot_active:.2f} (실시간 현재가: ${spot_live:.2f})
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown(f"""
+            <div style="display: inline-block; border: 1.5px solid #FF1744; border-radius: 20px; padding: 6px 18px; background-color: rgba(255, 23, 68, 0.08); color: #FF1744; font-family: Outfit; font-weight: 700; font-size: 1.05rem; margin-top: 5px; margin-bottom: 15px; box-shadow: 0 4px 12px rgba(255, 23, 68, 0.15);">
+                📊 {sel_ticker} 현재가: ${spot_live:.2f}
+            </div>
+            """, unsafe_allow_html=True)
 
     # 선택된 티커의 옵션만 필터링 (원본 인덱스 맵핑 포함)
     filtered_basket = []
+    val_mode = st.session_state.get("valuation_mode", "Mode A")
+    
+    import pytz
+    est = pytz.timezone("America/New_York")
+    ny_time = datetime.datetime.now(est)
+    is_market_open = (ny_time.weekday() < 5 and 
+                      datetime.time(9, 30) <= ny_time.time() <= datetime.time(16, 0))
+    is_market_closed = not is_market_open
+    
     for orig_idx, opt in enumerate(st.session_state.basket):
         if get_ticker_from_symbol(opt["symbol"]) == sel_ticker:
             opt_copy = opt.copy()
             opt_copy["original_idx"] = orig_idx
+            # opt["remn_cnt"] represents today's DTE
+            if val_mode == "Mode A" and is_market_closed:
+                # Mode A + Closed Market: use yesterday's DTE (today's DTE + 1)
+                opt_copy["remn_cnt"] = opt["remn_cnt"] + 1
+            else:
+                # Mode B or Open Market: use today's DTE directly
+                opt_copy["remn_cnt"] = opt["remn_cnt"]
             filtered_basket.append(opt_copy)
 
     cols_header = st.columns([2.5, 1.2, 1.2, 1.2, 1.2, 1.0])
@@ -150,7 +263,12 @@ def get_simulation_price_range(filtered_basket, rate_val):
     if not filtered_basket:
         return 0.0, 100.0
 
-    if st.session_state.underlying_price is not None:
+    override_active = st.session_state.get("analysis_price_override_active", False)
+    override_val = st.session_state.get("analysis_price_override_val")
+    spot_live = st.session_state.get("underlying_price")
+    spot_active = override_val if (override_active and override_val is not None) else spot_live
+
+    if spot_active is not None:
         recalculate_ivs(rate_val)
 
     strikes = [opt["strike"] for opt in filtered_basket]
@@ -163,7 +281,7 @@ def get_simulation_price_range(filtered_basket, rate_val):
     t_annual = max_dte / 365.0
     std_dev = avg_iv * math.sqrt(t_annual)
 
-    S_current = st.session_state.underlying_price if st.session_state.underlying_price is not None else strikes[0]
+    S_current = spot_active if spot_active is not None else strikes[0]
     ci_lower = S_current * math.exp(-1.96 * std_dev)
     ci_upper = S_current * math.exp(1.96 * std_dev)
 
@@ -214,7 +332,12 @@ def render_simulation_controls(filtered_basket, max_dte, rate_val):
         x_max = x_min + 1.0
 
     # Determine default target value
-    default_val = st.session_state.get("underlying_price")
+    override_active = st.session_state.get("analysis_price_override_active", False)
+    override_val = st.session_state.get("analysis_price_override_val")
+    spot_live = st.session_state.get("underlying_price")
+    spot_active = override_val if (override_active and override_val is not None) else spot_live
+
+    default_val = spot_active
     if default_val is None:
         if filtered_basket:
             default_val = filtered_basket[0]["strike"]
@@ -234,7 +357,7 @@ def render_simulation_controls(filtered_basket, max_dte, rate_val):
         st.session_state.target_num = default_val
 
     with col_sim2:
-        spot = st.session_state.underlying_price
+        spot = spot_active
         if spot and spot > 0:
             target_val = st.session_state.target_slider
             pct_change = (target_val - spot) / spot * 100
@@ -254,12 +377,17 @@ def render_simulation_controls(filtered_basket, max_dte, rate_val):
 
 
 def render_analysis_chart_and_summary(filtered_basket, vol_change_val, rate_val, days_to_expiry_val, target_underlying_val):
-    if st.session_state.underlying_price is not None:
+    override_active = st.session_state.get("analysis_price_override_active", False)
+    override_val = st.session_state.get("analysis_price_override_val")
+    spot_live = st.session_state.get("underlying_price")
+    spot_active = override_val if (override_active and override_val is not None) else spot_live
+
+    if spot_active is not None:
         recalculate_ivs(rate_val)
 
     fig = render_portfolio_payoff_chart(
         basket=filtered_basket,
-        underlying_price=st.session_state.underlying_price,
+        underlying_price=spot_active,
         rate=rate_val,
         vol_change=vol_change_val,
         days_to_expiry=days_to_expiry_val,
@@ -267,9 +395,9 @@ def render_analysis_chart_and_summary(filtered_basket, vol_change_val, rate_val,
     st.plotly_chart(fig, use_container_width=True, config={"scrollZoom": True})
     st.info("💡 **팁**: 대화형 Plotly 그래프 위에 마우스를 올리면 각 지점의 구체적인 만기 손익과 만기 전 예상 손익 정보를 툴팁으로 확인할 수 있습니다. 마우스 스크롤을 통해 차트 확대/축소(Zoom)도 가능합니다.")
 
-    if target_underlying_val is not None and st.session_state.underlying_price is not None:
+    if target_underlying_val is not None and spot_active is not None:
         st.markdown("---")
-        spot = st.session_state.underlying_price
+        spot = spot_active
         pct_change = (target_underlying_val - spot) / spot * 100
         st.subheader(f"🎯 목표 주가 ${target_underlying_val:.2f} ({pct_change:+.2f}%) 시나리오 분석 (만기 {days_to_expiry_val}일 전)")
 
