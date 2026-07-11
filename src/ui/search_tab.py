@@ -105,7 +105,7 @@ def render_search_tab(rate_val):
 
         if spot_live is not None and underlying_info is not None and underlying_info.get("ticker") == search_ticker:
             # 1. Valuation Mode & Price Simulation control panel
-            with st.expander("⚙️ 기초자산 평가 기준 및 주가 설정", expanded=False):
+            with st.expander("⚙️ 기초자산 평가 기준 및 주가 설정", expanded=True):
                 st.markdown("<p style='font-size: 0.85rem; color: #8888aa; margin-bottom: 12px;'>평가 기준 모드(Mode A/B)와 기초자산 주가 설정을 한곳에서 제어합니다. 모드에 따라 주가 및 만기일 기준이 다르게 자동 적용됩니다.</p>", unsafe_allow_html=True)
                 
                 # 라디오 버튼을 통한 평가 모드 선택
@@ -137,17 +137,18 @@ def render_search_tab(rate_val):
 
                 st.markdown("---")
 
-                col_sim1, col_sim2 = st.columns([1, 1])
-
                 is_mode_a = (new_mode == "Mode A")
                 
-                # Mode A인 경우 체크박스와 입력기, 복원 버튼들을 모두 비활성화합니다.
-                override_active = col_sim1.checkbox(
+                # 1. Checkbox positioned at the top of the simulation block
+                override_active = st.checkbox(
                     "주가 수동 보정 활성화 (Mode B 전용)",
                     key="override_price_active_checkbox",
                     disabled=is_mode_a
                 )
                 st.session_state.override_price_active = override_active
+
+                # 2. Input and Action controls aligned horizontally in three equal columns
+                col_sim1, col_sim2, col_sim3 = st.columns([1, 1, 1])
 
                 if "override_price_val_input" not in st.session_state or st.session_state.override_price_val_input is None:
                     st.session_state.override_price_val_input = spot_live
@@ -177,6 +178,8 @@ def render_search_tab(rate_val):
                     st.session_state.override_price_active_checkbox = False
                     st.session_state.override_price_val_input = spot_live
 
+                # Spacer to push buttons down to align perfectly with the number input field
+                col_sim2.markdown("<div style='padding-top: 28px;'></div>", unsafe_allow_html=True)
                 col_sim2.button(
                     btn_prev_label,
                     use_container_width=True,
@@ -184,7 +187,8 @@ def render_search_tab(rate_val):
                     on_click=click_prev_close
                 )
 
-                col_sim2.button(
+                col_sim3.markdown("<div style='padding-top: 28px;'></div>", unsafe_allow_html=True)
+                col_sim3.button(
                     "실시간 현재가 복원",
                     use_container_width=True,
                     disabled=is_mode_a,
